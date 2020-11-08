@@ -1,12 +1,13 @@
 package dev.kongsvik.ktor_oidc_server.utils
 
+import arrow.fx.IO
+import arrow.fx.extensions.fx
 import java.security.SecureRandom
 import java.util.*
 
-fun generateSecret(byteSize: Int): String {
-    val rand = SecureRandom();
-    var bytes = ByteArray(byteSize)
+fun generateSecret(byteSize: Int): IO<String> = IO.fx {
+    val rand = SecureRandom()
+    val bytes = ByteArray(byteSize)
     rand.nextBytes(bytes)
-    val encoder = Base64.getEncoder().withoutPadding()
-    return encoder.encodeToString(bytes)
+    Base64.getEncoder().withoutPadding().encodeToString(bytes)
 }

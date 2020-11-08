@@ -44,8 +44,7 @@ fun Routing.authorize() {
             }
 
             if(!client.redirectUris.any{
-                    println(it.uri)
-                    it.uri.toString() == body.redirectUri
+                    it == body.redirectUri
                 }){
                 call.respondRedirect("${body.redirectUri}?error=access_denied&error_description=invalid%20redirect_uri${state}")
                 return@post

@@ -1,44 +1,26 @@
 package dev.kongsvik.ktor_oidc_server.services
 
-import arrow.Kind
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
+import arrow.fx.ForIO
 import arrow.fx.IO
 import arrow.fx.extensions.fx
-
+import arrow.fx.extensions.io.async.async
 import dev.kongsvik.ktor_oidc_server.utils.generateSecret
 import java.time.LocalDateTime
 
 object TokenService : ITokenService {
+
     override fun getTokensByAuthorizationCodeGrant(grant: Grant.AuthorizationCodeGrant): IO<Either<TokenServiceError, Tokens>> =
         IO.fx {
-            val client = ClientService.getClientById(grant.clientId)
+            val server = CodeService(IO.async())
+            val client = !ClientService.getClientById(grant.clientId)
+            val code = server.getCodeByCode(grant.code).map
+            if (client.clientId != grant.clientId || client.clientSecret != grant.clientSecret)  return@fx TokenServiceError.InvalidClient.left()
+            if(code.redirectUri != grant.redirectUri || code.expireAt.isAfter(LocalDateTime.now())) return@fx TokenServiceError.InvalidGrant.left()
 
-            val isClientValid = client.map {
-                it.clientId.toString() == grant.clientId && it.clientSecret == grant.clientSecret
-            }.bind()
-
-            if (!isClientValid)
-                return@fx TokenServiceError.InvalidClient.left()
-
-            val code = CodeService.getCodeByCode(grant.code)
-
-            val isGrantValid = code.map {
-                it.redirectUri == grant.redirectUri && it.expireAt.isAfter(LocalDateTime.now())
-            }.bind()
-
-            if (!isGrantValid)
-                return@fx TokenServiceError.InvalidGrant.left()
-
-            Tokens(
-                generateSecret(16),
-                generateSecret(16),
-                3600,
-                generateSecret(16),
-                emptyList(),
-                generateSecret(16)
-            ).right()
+            generateTokens().bind().right()
         }
 
     override fun getTokensByDeviceCodeGrant(grant: Grant.DeviceCodeGrant): IO<Either<TokenServiceError, Tokens>> {
@@ -53,4 +35,13 @@ object TokenService : ITokenService {
         TODO("Not yet implemented")
     }
 
+    fun generateTokens(): IO<Tokens> = IO.fx {
+        Tokens(
+            !generateSecret(16),
+            !generateSecret(16),
+            3600,
+            !generateSecret(16),
+            emptyList(),
+            !generateSecret(16))
+    }
 }

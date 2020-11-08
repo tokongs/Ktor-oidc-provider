@@ -1,16 +1,18 @@
 package dev.kongsvik.ktor_oidc_server.routes
 
 import arrow.core.Either
-import arrow.core.extensions.either.applicativeError.handleError
-import arrow.core.extensions.either.applicativeError.raiseError
-import arrow.core.extensions.either.monadError.monadError
-import arrow.core.extensions.validated.applicativeError.raiseError
-import arrow.core.fix
+import arrow.core.computations.either
+import arrow.core.extensions.fx
 import arrow.core.left
+import arrow.core.right
 import arrow.fx.IO
+import arrow.fx.IO.Companion.effect
 import arrow.fx.extensions.fx
-import arrow.fx.handleError
-import dev.kongsvik.ktor_oidc_server.services.*
+import arrow.fx.extensions.toIO
+import dev.kongsvik.ktor_oidc_server.services.Grant
+import dev.kongsvik.ktor_oidc_server.services.TokenService
+import dev.kongsvik.ktor_oidc_server.services.TokenServiceError
+import dev.kongsvik.ktor_oidc_server.services.Tokens
 import io.ktor.application.*
 import io.ktor.http.*
 import io.ktor.request.*
@@ -18,74 +20,75 @@ import io.ktor.response.*
 import io.ktor.routing.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import org.h2.engine.Right
-
 
 
 fun Routing.token() {
     route("token") {
         post {
-            getTokenParams(call.receiveParameters())
-                .flatMap { grantFromRequest(it) }
-                .flatMap { getToken(it) }
-                .attempt().unsafeRunSync().apply {
-                    when (this) {
-                        is Either.Left -> call.respond(HttpStatusCode.BadRequest, TokenEndpointError.InvalidRequest("Something went wrong"))
-                        is Either.Right -> when(this.b){
-                            is Either.Left ->  call.respond(HttpStatusCode.BadRequest, (this.b as Either.Left<TokenEndpointError>).a)
-                            is Either.Right ->  call.respond(HttpStatusCode.OK, tokenResponseFromTokens((this.b as Either.Right<Tokens>).b))
-                        }
-                    }
+            IO.fx {
+                val response = !effect { call.receiveParameters() }
+                    .flatMap { getTokenParams(it) }
+                    .flatMap { grantFromRequest(it).toIO() }
+                    .flatMap { getToken(it) }
+
+                when (response) {
+                    is Either.Left -> effect { call.respond(HttpStatusCode.BadRequest, response.a) }
+                    is Either.Right -> effect { call.respond(HttpStatusCode.OK, response.b) }
                 }
+
+            }.unsafeRunAsync {
+                if (it is Either.Left) effect {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        TokenEndpointError.InvalidRequest("something went front")
+                    )
+                }
+            }
         }
     }
 }
 
-private fun getToken(grant: Grant): IO<Either<TokenEndpointError, Tokens>> = when (grant) {
-    is Grant.AuthorizationCodeGrant -> TokenService.getTokensByAuthorizationCodeGrant(grant)
-        .map { it.mapLeft { error -> tokenEndpointErrorFromTokenServiceError(error) } }
-
-    is Grant.ClientCredentialsGrant -> TokenService.getTokensByClientCredentialsGrant(grant)
-        .map { it.mapLeft { error -> tokenEndpointErrorFromTokenServiceError(error) } }
-
-    is Grant.DeviceCodeGrant -> TokenService.getTokensByDeviceCodeGrant(grant)
-        .map { it.mapLeft { error -> tokenEndpointErrorFromTokenServiceError(error) } }
-
-    is Grant.RefreshTokenGrant -> TokenService.getTokensByRefreshTokenGrant(grant)
-        .map { it.mapLeft { error -> tokenEndpointErrorFromTokenServiceError(error) } }
+private fun getToken(grant: Grant): IO<Either<TokenEndpointError, Tokens>> =IO.fx {
+    when (grant) {
+         is Grant.AuthorizationCodeGrant -> !TokenService.getTokensByAuthorizationCodeGrant(grant)
+             .map { it.mapLeft { error -> tokenEndpointErrorFromTokenServiceError(error) } }
+    /*     is Grant.ClientCredentialsGrant -> TokenService.getTokensByClientCredentialsGrant(grant)
+             .map { it.mapLeft { error -> tokenEndpointErrorFromTokenServiceError(error) } }
+         is Grant.DeviceCodeGrant -> TokenService.getTokensByDeviceCodeGrant(grant)
+             .map { it.mapLeft { error -> tokenEndpointErrorFromTokenServiceError(error) } }
+         is Grant.RefreshTokenGrant -> TokenService.getTokensByRefreshTokenGrant(grant)
+             .map { it.mapLeft { error -> tokenEndpointErrorFromTokenServiceError(error) } }*/
+     }
 }
 
-private fun grantFromRequest(request: TokenRequest): IO<Grant> = when (request.grantType) {
-    "authorization_code" -> IO.just(
-        Grant.AuthorizationCodeGrant(
-            request.code,
-            request.redirectUri,
-            request.clientId,
-            request.clientSecret
-        )
-    )
-    "client_credentials" -> IO.just(
-        Grant.ClientCredentialsGrant(
-            emptyList(),
-            request.clientId,
-            request.clientSecret
-        )
-    )
-    "device_code" -> IO.just(
-        Grant.DeviceCodeGrant(
-            "code",
-            request.clientId
-        )
-    )
-    "refresh_token" -> IO.just(
+private fun grantFromRequest(request: TokenRequest): Either<TokenEndpointError, Grant> = when (request.grantType) {
+    "authorization_code" -> Grant.AuthorizationCodeGrant(
+        request.code,
+        request.redirectUri,
+        request.clientId,
+        request.clientSecret
+    ).right()
+
+    "client_credentials" -> Grant.ClientCredentialsGrant(
+        emptyList(),
+        request.clientId,
+        request.clientSecret
+    ).right()
+
+    "device_code" -> Grant.DeviceCodeGrant(
+        "code",
+        request.clientId
+    ).right()
+
+    "refresh_token" ->
         Grant.RefreshTokenGrant(
             "token",
             emptyList(),
             request.clientId,
             request.clientSecret,
-        )
-    )
-    else -> IO.raiseError(TokenEndpointError.InvalidGrant())
+        ).right()
+
+    else -> TokenEndpointError.InvalidGrant().left()
 }
 
 private fun tokenEndpointErrorFromTokenServiceError(error: TokenServiceError) = when (error) {
@@ -105,22 +108,23 @@ private fun getTokenParams(params: Parameters): IO<TokenRequest> = IO.fx {
     )
 }
 
-private fun tokenResponseFromTokens(tokens: Tokens) = TokenResponse(
-    tokens.accessToken, tokens.tokenType, tokens.refreshToken, tokens.expiresIn, tokens.IdToken
-)
 
 @Serializable
 private sealed class TokenEndpointError(val error: String) : Error() {
     @Serializable
     class InvalidRequest(val error_description: String) : TokenEndpointError("invalid_request")
+
     @Serializable
-    class InvalidClient() : TokenEndpointError("invalid_client")
+    class InvalidClient : TokenEndpointError("invalid_client")
+
     @Serializable
-    class InvalidGrant() : TokenEndpointError("invalid_grant")
+    class InvalidGrant : TokenEndpointError("invalid_grant")
+
     @Serializable
-    class UnauthorizedClient() : TokenEndpointError("unauthorized_client")
+    class UnauthorizedClient : TokenEndpointError("unauthorized_client")
+
     @Serializable
-    class InvalidScope() : TokenEndpointError("invalid_scope")
+    class InvalidScope : TokenEndpointError("invalid_scope")
 }
 
 @Serializable

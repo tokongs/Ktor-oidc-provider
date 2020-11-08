@@ -40,7 +40,6 @@ fun main(){
         addLogger(StdOutSqlLogger)
         SchemaUtils.create (Clients)
         SchemaUtils.create (Contacts)
-        SchemaUtils.create (RequestUris)
         SchemaUtils.create (RedirectUris)
         SchemaUtils.create (Codes)
     }

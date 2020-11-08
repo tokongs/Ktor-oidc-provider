@@ -40,6 +40,7 @@ dependencies {
     implementation(arrow("core"))
     implementation(arrow("fx"))
     implementation(arrow("syntax"))
+    implementation(arrow("mtl"))
     kapt(arrow("meta"))
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinxSerializationVersion")
     implementation(exposed("core"))

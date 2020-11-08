@@ -33,7 +33,7 @@ object Clients : LongIdTable("Clients", "clientId") {
 class ClientEntity(client_id: EntityID<Long>) : LongEntity(client_id) {
     companion object : LongEntityClass<ClientEntity>(Clients)
 
-    val redirectUris by RedirectUriEntity referrersOn RedirectUris.client
+    var redirectUris by RedirectUriEntity referrersOn RedirectUris.client
     var tokenEndpointAuthMethod by Clients.tokenEndpointAuthMethod
     var grantTypes by Clients.grantTypes
     var responseTypes by Clients.responseTypes
